@@ -18,7 +18,7 @@
   - GND   -> ESP32 GND
   - WS2812 DIN -> GPIO 13
   - Config button -> GPIO 0 (optional, pull to GND to reset config)
-  - Two 8x8 panels chained: left panel first, right panel second
+  - Two 8x8 panels chained: left panel first, right panel    v     second
   - Each panel uses sequential row-major pixel layout (not zigzag)
   - Display is rotated 90° clockwise
 */
@@ -34,6 +34,7 @@
 
 #include "weather_icons.h"
 #include "temperature_range.h"
+#include "default_animation.h"
 
 // ======================== USER CONFIGURATION ========================
 
@@ -90,12 +91,12 @@ unsigned long lastDisplayUpdate = 0;
 
 // System state
 bool configPortalActive = false;
-bool wifiConnected = false;  // false -> play Tetris default animation (offline mode)
+bool wifiConnected = false;  // ESP32 是否已连上网：false 时播放默认动画
 
-// Default animation shown whenever WiFi is not connected.
-// Uses the cloudy GIF from weather_icons.h (its later frames contain
-// Tetris-style falling-block patterns).
-#define DEFAULT_ANIMATION_ICON  WEATHER_CLOUDY
+// 默认动画：仅在 ESP32 没连上网时播放（来自 default_animation.h）。
+// 共 11 帧，帧间延迟 800ms，显示在左侧面板；右侧温度面板熄灭。
+#define DEFAULT_ANIMATION_FRAME_COUNT  11
+#define DEFAULT_ANIMATION_FRAME_DELAY  800
 
 // Reconnect cadence in offline mode (ms between attempts)
 #define OFFLINE_RECONNECT_INTERVAL_MS 10000
@@ -444,8 +445,9 @@ void displayTemperature(int temp) {
 }
 
 void updateDisplay() {
-  // Offline: play the default Tetris animation (cloudy GIF) on the left panel
-  // and keep the right (temperature) panel blank.
+  // ESP32 没连上网时（!wifiConnected）：在左侧面板播放默认动画
+  // （来自 default_animation.h），右侧温度面板保持熄灭。
+  // 连上网后才会执行下面的天气+温度显示逻辑。
   if (!wifiConnected) {
     playDefaultAnimation();
     return;
@@ -474,25 +476,23 @@ void updateDisplay() {
   strip.show();
 }
 
-// Plays the default Tetris animation when WiFi is not connected.
-// Uses the cloudy GIF from weather_icons.h on the left panel and
-// clears the right panel since we have no temperature data offline.
+// 当 ESP32 没连上网时播放默认动画。
+// 在左侧面板播放 default_animation.h 中的动画，
+// 右侧温度面板保持熄灭（因为离线时没有温度数据）。
+// 仅在 !wifiConnected 时由 updateDisplay() 调用。
 void playDefaultAnimation() {
-  const WeatherIcon& icon = weatherIcons[DEFAULT_ANIMATION_ICON];
-
-  // Advance animation frame
-  if (millis() - lastFrameTime >= icon.frameDelay) {
+  if (millis() - lastFrameTime >= DEFAULT_ANIMATION_FRAME_DELAY) {
     lastFrameTime = millis();
     currentFrame++;
-    if (currentFrame >= icon.frameCount) {
+    if (currentFrame >= DEFAULT_ANIMATION_FRAME_COUNT) {
       currentFrame = 0;
     }
   }
 
-  // Draw default animation on the left (weather) panel
-  displayWeatherIcon(DEFAULT_ANIMATION_ICON, currentFrame);
+  const uint32_t* framePtr;
+  memcpy_P(&framePtr, &frameData[currentFrame], sizeof(uint32_t*));
+  displayFrame(framePtr, WEATHER_PANEL_OFFSET);
 
-  // Clear the right (temperature) panel
   for (int i = 0; i < 64; i++) {
     strip.setPixelColor(TEMP_PANEL_OFFSET + i, 0);
   }
